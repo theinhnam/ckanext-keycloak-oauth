@@ -1,63 +1,68 @@
+import os
 import logging
 from ckan.plugins import implements, SingletonPlugin
-from ckan.plugins import IConfigurer, IRoutes, IAuthenticator
+from ckan.plugins import IConfigurer, IAuthenticator
+from ckan.config.environment import config
 from requests_oauthlib import OAuth2Session
-from pylons import config
+from ckan.model.user import User
+from flask import g
+from flask import request, redirect
 
 log = logging.getLogger(__name__)
 
 class KeycloakOAuthPlugin(SingletonPlugin):
     implements(IConfigurer)
-    implements(IRoutes)
     implements(IAuthenticator)
 
-    def update_config(self, config_):
-        extra = config_.get('extra_template_paths', [])
-        extra.append(__import__('keycloak_oauth').__path__[0] + '/templates')
-        config_['extra_template_paths'] = extra
+    def login(self):
+        # khi CKAN cần điều hướng login, ta redirect tới Keycloak
+        url = self.login_url()
+        return redirect(url)
 
-    def before_map(self, map_):
-        from keycloak_oauth.controller import KeycloakController
-        map_.connect('oauth_login', '/oauth_login', controller='keycloak_oauth.controller:KeycloakController', action='login')
-        map_.connect('oauth_callback', '/oauth_callback', controller='keycloak_oauth.controller:KeycloakController', action='callback')
-        return map_
+    def update_config(self, config_):
+        root = os.path.dirname(os.path.abspath(__file__))
+        tpl = os.path.join(root, 'templates')
+        existing = config_.get('extra_template_paths')
+        if not existing:
+            paths = [tpl]
+        elif isinstance(existing, str):
+            paths = [existing, tpl]
+        else:
+            paths = existing + [tpl]
+        config_['extra_template_paths'] = ','.join(paths)
 
     def login_url(self):
-        oauth = self._get_oauth_session()
-        auth_url = self._get_setting('auth_url')
-        redirect_uri = self._get_setting('redirect_uri')
-        authorization_url, state = oauth.authorization_url(
-            auth_url,
-            redirect_uri=redirect_uri
-        )
-        session = __import__('pylons').request.environ['beaker.session']
-        session['oauth_state'] = state
-        session.save()
+        oauth = self._get_oauth_session()  # đã khởi tạo với redirect_uri rồi
+        auth_url = config.get('ckan.keycloak_oauth.auth_url')
+        # KHÔNG truyền redirect_uri nữa ở đây
+        authorization_url, state = oauth.authorization_url(auth_url)
+        
+        from ckan.lib.base import request
+        sess = request.environ['beaker.session']
+        sess['oauth_state'] = state
+        sess.save()
         return authorization_url
 
-    def identify(self, environ):
-        session = environ['beaker.session']
-        token = session.get('oauth_token')
-        if token:
-            oauth = self._get_oauth_session(token)
-            resp = oauth.get(self._get_setting('userinfo_url'))
-            data = resp.json()
-            return data.get('preferred_username')
-        return None
+    def identify(self):
+        environ = request.environ
+        sess = environ['beaker.session']
+        token = sess.get('oauth_token')
+        if not token:
+            return None
+        oauth = self._get_oauth_session(token)
+        resp = oauth.get(config.get('ckan.keycloak_oauth.userinfo_url'))
+        data = resp.json()
+        return data.get('preferred_username')
+
 
     def authenticate(self, environ, data_dict):
         return environ.get('REMOTE_USER')
 
     def _get_oauth_session(self, token=None):
-        client_id = self._get_setting('client_id')
-        scope = self._get_setting('scope') or 'openid'
+        client_id = config.get('ckan.keycloak_oauth.client_id')
+        scope = config.get('ckan.keycloak_oauth.scope', 'openid')
+        redirect_uri = config.get('ckan.keycloak_oauth.redirect_uri')
+        
         if token:
             return OAuth2Session(client_id, token=token)
-        return OAuth2Session(
-            client_id,
-            redirect_uri=self._get_setting('redirect_uri'),
-            scope=scope
-        )
-
-    def _get_setting(self, name):
-        return config.get(f'ckan.keycloak_oauth.{name}')
+        return OAuth2Session(client_id, redirect_uri=redirect_uri, scope=scope)

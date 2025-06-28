@@ -1,25 +1,24 @@
 import logging
-from ckan.lib.base import BaseController, request
-from pylons import config
+from flask import request, redirect
+from ckan.plugins import toolkit
+from ckan.config.environment import config
+from keycloak_oauth.plugin import KeycloakOAuthPlugin
 
 log = logging.getLogger(__name__)
 
-class KeycloakController(BaseController):
-    def login(self):
-        from keycloak_oauth.plugin import KeycloakOAuthPlugin
-        url = KeycloakOAuthPlugin().login_url()
-        return self.redirect_to(url)
+def login():
+    url = KeycloakOAuthPlugin().login_url()
+    return redirect(url)
 
-    def callback(self):
-        from keycloak_oauth.plugin import KeycloakOAuthPlugin
-        plugin = KeycloakOAuthPlugin()
-        oauth = plugin._get_oauth_session()
-        token = oauth.fetch_token(
-            config.get('ckan.keycloak_oauth.token_url'),
-            client_secret=config.get('ckan.keycloak_oauth.client_secret'),
-            authorization_response=request.url
-        )
-        session = request.environ['beaker.session']
-        session['oauth_token'] = token
-        session.save()
-        return self.redirect_to('home')
+def callback():
+    plugin = KeycloakOAuthPlugin()
+    oauth = plugin._get_oauth_session()
+    token = oauth.fetch_token(
+        config.get('ckan.keycloak_oauth.token_url'),
+        client_secret=config.get('ckan.keycloak_oauth.client_secret'),
+        authorization_response=request.url
+    )
+    sess = request.environ['beaker.session']
+    sess['oauth_token'] = token
+    sess.save()
+    return redirect(toolkit.url_for('home.index'))
