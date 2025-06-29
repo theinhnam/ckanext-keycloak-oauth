@@ -15,7 +15,6 @@ class KeycloakOAuthPlugin(SingletonPlugin):
     implements(IAuthenticator)
 
     def login(self):
-        # khi CKAN cần điều hướng login, ta redirect tới Keycloak
         url = self.login_url()
         return redirect(url)
 
@@ -32,9 +31,8 @@ class KeycloakOAuthPlugin(SingletonPlugin):
         config_['extra_template_paths'] = ','.join(paths)
 
     def login_url(self):
-        oauth = self._get_oauth_session()  # đã khởi tạo với redirect_uri rồi
+        oauth = self._get_oauth_session()
         auth_url = config.get('ckan.keycloak_oauth.auth_url')
-        # KHÔNG truyền redirect_uri nữa ở đây
         authorization_url, state = oauth.authorization_url(auth_url)
         
         from ckan.lib.base import request
